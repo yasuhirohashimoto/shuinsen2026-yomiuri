@@ -434,7 +434,7 @@
             textSprite.renderOrder = 999;
             scene.add(textSprite);
 
-            candidateObjects.push({ name: pt.name, party: pt.party, sprite: sprite, position: new THREE.Vector3(pt.x, pt.y, pt.z) });
+            candidateObjects.push({ name: pt.name, party: pt.party, sprite: sprite, label: textSprite, position: new THREE.Vector3(pt.x, pt.y, pt.z) });
         });
 
         // --- 4. 凡例とインタラクション ---
