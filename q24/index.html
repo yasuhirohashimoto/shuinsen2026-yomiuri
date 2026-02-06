@@ -64,6 +64,7 @@
         box-shadow: var(--shadow);
         outline: none;
         transition: var(--transition);
+        -webkit-appearance: none;
     }
     #search-input:focus {
         border-color: var(--primary-color);
@@ -129,6 +130,7 @@
         position: relative;
         border-left: 4px solid transparent;
         border-radius: var(--radius-sm);
+        -webkit-tap-highlight-color: transparent;
     }
     .legend-item:hover { background: rgba(0,0,0,0.05); }
     .legend-item.selected { 
@@ -159,9 +161,14 @@
         justify-content: center;
         align-items: center;
         transition: var(--transition);
+        -webkit-tap-highlight-color: transparent; /* タップハイライト消去 */
+        outline: none;
     }
-    #about-btn:hover { background: var(--primary-color); color: white; transform: scale(1.05); }
-
+    @media (hover: hover) { /* ホバーエフェクトをPCのみに限定（スマホで四角く色が残るのを防ぐ） */
+        #about-btn:hover { background: var(--primary-color); color: white; transform: scale(1.05); }
+    }
+    #about-btn:active { transform: scale(0.95); }
+    
     /* モーダル */
     #about-modal {
         display: none;
@@ -218,7 +225,7 @@
         line-height: 1.6;
         box-shadow: var(--shadow);
         border: 1px solid rgba(255,255,255,0.1);
-        pointer-events: none; /* 基本はスルー、スマホクリック時等はJSで制御 */
+        pointer-events: none; /* PCではスルー、スマホではmedia queryでautoにする */
         min-width: 200px;
     }
     #tooltip strong { font-size: 16px; display: block; margin-bottom: 6px; border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom: 4px;}
@@ -391,6 +398,12 @@
         
         const gridHelper = new THREE.GridHelper(100, 20, THEME.colors.grid, THEME.colors.grid);
         gridHelper.rotation.x = Math.PI / 2; 
+
+        // --- Zファイティング（チラつき）防止 ---
+        gridHelper.material.polygonOffset = true;
+        gridHelper.material.polygonOffsetFactor = 1;
+        gridHelper.material.polygonOffsetUnits = 1;
+        
         scene.add(gridHelper);
 
         const origin = new THREE.Vector3(0, 0, 0);
@@ -640,6 +653,7 @@
                         hoveredSprite = targetSprite;
                         gsap.to(hoveredSprite.scale, { x: 1.5, y: 1.5, duration: THEME.duration.hover });
                     }
+                    currentData = targetData;
                     showTooltip(targetData);
                     updateTooltipPos(e.clientX, e.clientY);
                 } else {
@@ -660,6 +674,12 @@
             }
         }
 
+        tooltip.addEventListener('pointerup', (e) => {
+            e.stopPropagation();
+            if (currentData) jumpToUrl(currentData);
+        });
+
+        // ↑のpointerupがあるので不要。保険。
         tooltip.addEventListener('click', (e) => {
             e.stopPropagation();
             if (currentData) jumpToUrl(currentData);
