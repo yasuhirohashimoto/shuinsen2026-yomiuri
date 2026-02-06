@@ -401,9 +401,10 @@
         gridHelper.rotation.x = Math.PI / 2; 
 
         // --- Zファイティング（チラつき）防止 ---
+        gridHelper.material.depthWrite = false;
         gridHelper.material.polygonOffset = true;
-        gridHelper.material.polygonOffsetFactor = 1;
-        gridHelper.material.polygonOffsetUnits = 1;
+        gridHelper.material.polygonOffsetFactor = 10;
+        gridHelper.material.polygonOffsetUnits = 10;
         
         scene.add(gridHelper);
 
