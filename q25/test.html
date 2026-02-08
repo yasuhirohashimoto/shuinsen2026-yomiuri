@@ -405,612 +405,620 @@
        Script
        ========================= -->
   <script>
-    /* ==========================================================
-       0) Data
-       ========================================================== */
-    let pointsData = []
-    let legendData = []
-
     async function loadData() {
         try {
             const [candidatesRes, partiesRes] = await Promise.all([
                 fetch('./data/candidates-pca.json'),
                 fetch('./data/parties.json')
             ]);
-    
-            pointsData = await candidatesRes.json();
-            legendData = await partiesRes.json();
+            if (!candidatesRes.ok || !partiesRes.ok) {
+                throw new Error("ファイルの取得に失敗しました");
+            }     
+            const candidates = await candidatesRes.json();
+            const parties = await partiesRes.json();
+            return { candidates, parties };
     
         } catch (error) {
             console.error("データの読み込みに失敗しました:", error);
             alert("データを読み込めませんでした。");
+            return null;
         }
     }
-    
-    await loadData();
-    
-    // tooltip表示順（Q25の順序に合わせる）
-    const LEADER_LABELS = [
-      "高市早苗（自民）",
-      "吉村洋文（維新）",
-      "野田佳彦（中道改革）",
-      "玉木雄一郎（国民）",
-      "田村智子（共産）",
-      "山本太郎（れいわ）",
-      "神谷宗幣（参政）",
-      "百田尚樹（保守）",
-      "福島瑞穂（社民）",
-      "安野貴博（みらい）"
-    ];
 
+    async function main() {
+      
     /* ==========================================================
-       1) Constants / Theme
+       0) Data
        ========================================================== */
-    const THEME = {
-      colors: {
-        grid: 0xcccccc,
-        axisX: 0xff0000,
-        axisY: 0x00aa00,
-        axisZ: 0x0000ff,
-        text: "#333333"
-      },
-      opacity: {
-        point: 0.85,
-        label: 0.9,
-        dimmed: 0.15
-      },
-      duration: {
-        hover: 0.3,
-        camera: 1.5,
-        filter: 0.5,
-        resetScale: 0.2
-      }
-    };
-
-    const BASE_URL = "https://www.yomiuri.co.jp/election/shugiin/2026/";
-    const UI_SELECTORS = "#about-modal, #legend, #search-container, #about-btn, #search-results, #tooltip";
-
-    /* ==========================================================
-       2) Shape texture helpers (キャッシュして無駄生成を抑える)
-       - Legend icon: dataURL cache
-       - Sprite: texture & material cache
-       ========================================================== */
-    const shapeTextureCache = new Map();   // key: "shape|#RRGGBB" -> THREE.CanvasTexture
-    const shapeDataUrlCache = new Map();   // key: "shape|#RRGGBB" -> dataURL
-    const spriteMaterialCache = new Map(); // key: "shape|#RRGGBB" -> THREE.SpriteMaterial（共有）
-
-    function drawShapeToCanvas(type, color) {
-      const size = 64;
-      const canvas = document.createElement("canvas");
-      canvas.width = size;
-      canvas.height = size;
-
-      const ctx = canvas.getContext("2d");
-      ctx.fillStyle = color;
-
-      const center = size / 2;
-      const radius = size / 2 - 4;
-      const pad = 6;
-
-      ctx.beginPath();
-      if (type === 0) {
-        ctx.arc(center, center, radius, 0, Math.PI * 2);
-      } else if (type === 1) {
-        ctx.rect(pad, pad, size - pad * 2, size - pad * 2);
-      } else if (type === 2) {
-        ctx.moveTo(center, pad);
-        ctx.lineTo(size - pad, size - pad);
-        ctx.lineTo(pad, size - pad);
-        ctx.closePath();
-      } else if (type === 3) {
-        ctx.moveTo(center, pad);
-        ctx.lineTo(size - pad, center);
-        ctx.lineTo(center, size - pad);
-        ctx.lineTo(pad, center);
-        ctx.closePath();
-      } else if (type === 4) {
-        const w = 2 * pad;
-        ctx.moveTo(center - w, pad); ctx.lineTo(center + w, pad);
-        ctx.lineTo(center + w, center - w); ctx.lineTo(size - pad, center - w);
-        ctx.lineTo(size - pad, center + w); ctx.lineTo(center + w, center + w);
-        ctx.lineTo(center + w, size - pad); ctx.lineTo(center - w, size - pad);
-        ctx.lineTo(center - w, center + w); ctx.lineTo(pad, center + w);
-        ctx.lineTo(pad, center - w); ctx.lineTo(center - w, center - w);
-        ctx.closePath();
-      } else {
-        ctx.arc(center, center, radius, 0, Math.PI * 2);
-      }
-      ctx.fill();
-
-      return canvas;
-    }
-
-    function getShapeTexture(type, color) {
-      const key = `${type}|${color}`;
-      if (!shapeTextureCache.has(key)) {
-        const canvas = drawShapeToCanvas(type, color);
-        shapeTextureCache.set(key, new THREE.CanvasTexture(canvas));
-      }
-      return shapeTextureCache.get(key);
-    }
-
-    function getShapeDataUrl(type, color) {
-      const key = `${type}|${color}`;
-      if (!shapeDataUrlCache.has(key)) {
-        const tex = getShapeTexture(type, color);
-        shapeDataUrlCache.set(key, tex.image.toDataURL());
-      }
-      return shapeDataUrlCache.get(key);
-    }
-
-    function getSpriteMaterial(type, color) {
-      const key = `${type}|${color}`;
-      if (!spriteMaterialCache.has(key)) {
-        spriteMaterialCache.set(key, new THREE.SpriteMaterial({
-          map: getShapeTexture(type, color),
-          transparent: true,
-          opacity: THEME.opacity.point
-        }));
-      }
-      return spriteMaterialCache.get(key);
-    }
-
-    function createTextTexture(text) {
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-
-      const fontSize = 64;
-      ctx.font = `bold ${fontSize}px 'Noto Sans JP', sans-serif`;
-      const metrics = ctx.measureText(text);
-
-      canvas.width = metrics.width + 20;
-      canvas.height = fontSize + 20;
-
-      // resizeでctxがリセットされるので再設定
-      ctx.font = `bold ${fontSize}px 'Noto Sans JP', sans-serif`;
-      ctx.textBaseline = "middle";
-      ctx.fillStyle = THEME.colors.text;
-      ctx.fillText(text, 10, canvas.height / 2);
-
-      const texture = new THREE.CanvasTexture(canvas);
-      texture.minFilter = THREE.LinearFilter;
-      return { texture, width: canvas.width, height: canvas.height };
-    }
-
-    /* ==========================================================
-       3) Three.js setup
-       ========================================================== */
-    const scene = new THREE.Scene();
-    scene.background = new THREE.Color(0xffffff);
-
-    const gridHelper = new THREE.GridHelper(100, 20, THEME.colors.grid, THEME.colors.grid);
-    gridHelper.rotation.x = Math.PI / 2;
-
-    // gridのチラつき(Z-fighting)軽減
-    gridHelper.material.depthWrite = false;
-    gridHelper.material.polygonOffset = true;
-    gridHelper.material.polygonOffsetFactor = 10;
-    gridHelper.material.polygonOffsetUnits = 10;
-    scene.add(gridHelper);
-
-    // axes
-    const origin = new THREE.Vector3(0, 0, 0);
-    const axesDefs = [
-      { dir: new THREE.Vector3(1, 0, 0), color: THEME.colors.axisX, label: "PC1" },
-      { dir: new THREE.Vector3(0, 1, 0), color: THEME.colors.axisY, label: "PC2" },
-      { dir: new THREE.Vector3(0, 0, 1), color: THEME.colors.axisZ, label: "PC3" }
-    ];
-
-    for (const def of axesDefs) {
-      scene.add(new THREE.ArrowHelper(def.dir, origin, 55, def.color, 2, 1));
-
-      const labelData = createTextTexture(def.label);
-      const labelSprite = new THREE.Sprite(
-        new THREE.SpriteMaterial({ map: labelData.texture, transparent: true, opacity: 0.8 })
-      );
-      labelSprite.position.copy(def.dir.clone().multiplyScalar(58));
-      labelSprite.scale.set(labelData.width * 0.03, labelData.height * 0.03, 1);
-      scene.add(labelSprite);
-    }
-
-    // camera / renderer / controls
-    const initialCameraPos = { x: 0, y: 0, z: 80 };
-    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(initialCameraPos.x, initialCameraPos.y, initialCameraPos.z);
-
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    document.body.appendChild(renderer.domElement);
-
-    const controls = new THREE.OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.dampingFactor = 0.05;
-
-    /* ==========================================================
-       4) Candidates build
-       ========================================================== */
-    const candidateObjects = [];
-    const targetSprites = [];
-
-    function buildTooltipHtml(pt) {
-      const rows = LEADER_LABELS.map((label, i) => {
-        const v = pt.answer?.[i];
-        return `<div class="tooltip-row"><span>${label}:</span><span class="tooltip-val">${v ?? "-"}</span></div>`;
-      }).join("");
-
-      return `
-        <strong>${pt.name}</strong>
-        <div class="tooltip-party">${pt.party}</div>
-        ${rows}
-      `;
-    }
-
-    for (const pt of pointsData) {
-      // 点（スプライト）: 同じshape/colorは同じmaterialを共有
-      const sprite = new THREE.Sprite(getSpriteMaterial(pt.shape, pt.color));
-      sprite.position.set(pt.x, pt.y, pt.z);
-
-      // ラベル（候補者名）: 個別テクスチャ（メモリを消費する点に注意）
-      const textData = createTextTexture(pt.name);
-      const label = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: textData.texture,
-        transparent: true,
-        opacity: THEME.opacity.label,
-        depthTest: false
-      }));
-      label.position.set(pt.x, pt.y + 0.9, pt.z);
-      label.scale.set(textData.width * 0.012, textData.height * 0.012, 1);
-      label.renderOrder = 999;
-
-      sprite.userData = {
-        url: pt.url,
-        html: buildTooltipHtml(pt)
+      const data = await loadData();  
+      if (!data) return;
+  
+      const pointsData = data.candidates;
+      const legendData = data.parties;
+        
+      // tooltip表示順（Q25の順序に合わせる）
+      const LEADER_LABELS = [
+        "高市早苗（自民）",
+        "吉村洋文（維新）",
+        "野田佳彦（中道改革）",
+        "玉木雄一郎（国民）",
+        "田村智子（共産）",
+        "山本太郎（れいわ）",
+        "神谷宗幣（参政）",
+        "百田尚樹（保守）",
+        "福島瑞穂（社民）",
+        "安野貴博（みらい）"
+      ];
+  
+      /* ==========================================================
+         1) Constants / Theme
+         ========================================================== */
+      const THEME = {
+        colors: {
+          grid: 0xcccccc,
+          axisX: 0xff0000,
+          axisY: 0x00aa00,
+          axisZ: 0x0000ff,
+          text: "#333333"
+        },
+        opacity: {
+          point: 0.85,
+          label: 0.9,
+          dimmed: 0.15
+        },
+        duration: {
+          hover: 0.3,
+          camera: 1.5,
+          filter: 0.5,
+          resetScale: 0.2
+        }
       };
-
-      scene.add(sprite);
-      scene.add(label);
-
-      candidateObjects.push({
-        name: pt.name,
-        party: pt.party,
-        sprite,
-        label,
-        position: new THREE.Vector3(pt.x, pt.y, pt.z)
-      });
-
-      targetSprites.push(sprite);
-    }
-
-    /* ==========================================================
-       5) UI references
-       ========================================================== */
-    const legendDiv = document.getElementById("legend");
-    const tooltip = document.getElementById("tooltip");
-    const modal = document.getElementById("about-modal");
-
-    const searchInput = document.getElementById("search-input");
-    const searchResults = document.getElementById("search-results");
-
-    /* ==========================================================
-       6) Party filter (legend)
-       - sprite materialは共有されるので、同一materialへのgsap多重発行を避ける
-       ========================================================== */
-    let activeParty = null;
-
-    function tweenOpacity(material, targetOpacity) {
-      // 変化がほぼ無い場合はGSAP発行を抑制
-      if (Math.abs(material.opacity - targetOpacity) < 0.001) return;
-      gsap.to(material, {
-        opacity: targetOpacity,
-        duration: THEME.duration.filter,
-        ease: "power2.out"
-      });
-    }
-
-    function applyPartyFilter() {
-      // spriteは共有materialがあるのでdedupe（material単位で1回だけ）
-      const spriteTargets = new Map(); // material -> targetOpacity
-
-      for (const obj of candidateObjects) {
-        const isMatch = !activeParty || obj.party === activeParty;
-
-        // labelは個別materialなのでそのまま
-        tweenOpacity(obj.label.material, isMatch ? THEME.opacity.label : THEME.opacity.dimmed);
-
-        // sprite materialは共有される場合がある
-        const m = obj.sprite.material;
-        spriteTargets.set(m, isMatch ? THEME.opacity.point : THEME.opacity.dimmed);
+  
+      const BASE_URL = "https://www.yomiuri.co.jp/election/shugiin/2026/";
+      const UI_SELECTORS = "#about-modal, #legend, #search-container, #about-btn, #search-results, #tooltip";
+  
+      /* ==========================================================
+         2) Shape texture helpers (キャッシュして無駄生成を抑える)
+         - Legend icon: dataURL cache
+         - Sprite: texture & material cache
+         ========================================================== */
+      const shapeTextureCache = new Map();   // key: "shape|#RRGGBB" -> THREE.CanvasTexture
+      const shapeDataUrlCache = new Map();   // key: "shape|#RRGGBB" -> dataURL
+      const spriteMaterialCache = new Map(); // key: "shape|#RRGGBB" -> THREE.SpriteMaterial（共有）
+  
+      function drawShapeToCanvas(type, color) {
+        const size = 64;
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+  
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = color;
+  
+        const center = size / 2;
+        const radius = size / 2 - 4;
+        const pad = 6;
+  
+        ctx.beginPath();
+        if (type === 0) {
+          ctx.arc(center, center, radius, 0, Math.PI * 2);
+        } else if (type === 1) {
+          ctx.rect(pad, pad, size - pad * 2, size - pad * 2);
+        } else if (type === 2) {
+          ctx.moveTo(center, pad);
+          ctx.lineTo(size - pad, size - pad);
+          ctx.lineTo(pad, size - pad);
+          ctx.closePath();
+        } else if (type === 3) {
+          ctx.moveTo(center, pad);
+          ctx.lineTo(size - pad, center);
+          ctx.lineTo(center, size - pad);
+          ctx.lineTo(pad, center);
+          ctx.closePath();
+        } else if (type === 4) {
+          const w = 2 * pad;
+          ctx.moveTo(center - w, pad); ctx.lineTo(center + w, pad);
+          ctx.lineTo(center + w, center - w); ctx.lineTo(size - pad, center - w);
+          ctx.lineTo(size - pad, center + w); ctx.lineTo(center + w, center + w);
+          ctx.lineTo(center + w, size - pad); ctx.lineTo(center - w, size - pad);
+          ctx.lineTo(center - w, center + w); ctx.lineTo(pad, center + w);
+          ctx.lineTo(pad, center - w); ctx.lineTo(center - w, center - w);
+          ctx.closePath();
+        } else {
+          ctx.arc(center, center, radius, 0, Math.PI * 2);
+        }
+        ctx.fill();
+  
+        return canvas;
       }
-
-      for (const [m, op] of spriteTargets) {
-        tweenOpacity(m, op);
+  
+      function getShapeTexture(type, color) {
+        const key = `${type}|${color}`;
+        if (!shapeTextureCache.has(key)) {
+          const canvas = drawShapeToCanvas(type, color);
+          shapeTextureCache.set(key, new THREE.CanvasTexture(canvas));
+        }
+        return shapeTextureCache.get(key);
       }
-    }
-
-    function renderLegend() {
-      const frag = document.createDocumentFragment();
-      const legendEls = []; // selected切替をquerySelectorAllなしで行う
-
-      for (const item of legendData) {
-        const div = document.createElement("div");
-        div.className = "legend-item";
-
-        const iconUrl = getShapeDataUrl(item.style.shape, item.style.color);
-        div.innerHTML = `<img src="${iconUrl}" class="legend-icon" alt=""><span>${item.party}</span>`;
-
-        div.addEventListener("click", () => {
-          const same = activeParty === item.party;
-          activeParty = same ? null : item.party;
-
-          for (const el of legendEls) el.classList.remove("selected");
-          if (!same) div.classList.add("selected");
-
-          applyPartyFilter();
+  
+      function getShapeDataUrl(type, color) {
+        const key = `${type}|${color}`;
+        if (!shapeDataUrlCache.has(key)) {
+          const tex = getShapeTexture(type, color);
+          shapeDataUrlCache.set(key, tex.image.toDataURL());
+        }
+        return shapeDataUrlCache.get(key);
+      }
+  
+      function getSpriteMaterial(type, color) {
+        const key = `${type}|${color}`;
+        if (!spriteMaterialCache.has(key)) {
+          spriteMaterialCache.set(key, new THREE.SpriteMaterial({
+            map: getShapeTexture(type, color),
+            transparent: true,
+            opacity: THEME.opacity.point
+          }));
+        }
+        return spriteMaterialCache.get(key);
+      }
+  
+      function createTextTexture(text) {
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+  
+        const fontSize = 64;
+        ctx.font = `bold ${fontSize}px 'Noto Sans JP', sans-serif`;
+        const metrics = ctx.measureText(text);
+  
+        canvas.width = metrics.width + 20;
+        canvas.height = fontSize + 20;
+  
+        // resizeでctxがリセットされるので再設定
+        ctx.font = `bold ${fontSize}px 'Noto Sans JP', sans-serif`;
+        ctx.textBaseline = "middle";
+        ctx.fillStyle = THEME.colors.text;
+        ctx.fillText(text, 10, canvas.height / 2);
+  
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.minFilter = THREE.LinearFilter;
+        return { texture, width: canvas.width, height: canvas.height };
+      }
+  
+      /* ==========================================================
+         3) Three.js setup
+         ========================================================== */
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xffffff);
+  
+      const gridHelper = new THREE.GridHelper(100, 20, THEME.colors.grid, THEME.colors.grid);
+      gridHelper.rotation.x = Math.PI / 2;
+  
+      // gridのチラつき(Z-fighting)軽減
+      gridHelper.material.depthWrite = false;
+      gridHelper.material.polygonOffset = true;
+      gridHelper.material.polygonOffsetFactor = 10;
+      gridHelper.material.polygonOffsetUnits = 10;
+      scene.add(gridHelper);
+  
+      // axes
+      const origin = new THREE.Vector3(0, 0, 0);
+      const axesDefs = [
+        { dir: new THREE.Vector3(1, 0, 0), color: THEME.colors.axisX, label: "PC1" },
+        { dir: new THREE.Vector3(0, 1, 0), color: THEME.colors.axisY, label: "PC2" },
+        { dir: new THREE.Vector3(0, 0, 1), color: THEME.colors.axisZ, label: "PC3" }
+      ];
+  
+      for (const def of axesDefs) {
+        scene.add(new THREE.ArrowHelper(def.dir, origin, 55, def.color, 2, 1));
+  
+        const labelData = createTextTexture(def.label);
+        const labelSprite = new THREE.Sprite(
+          new THREE.SpriteMaterial({ map: labelData.texture, transparent: true, opacity: 0.8 })
+        );
+        labelSprite.position.copy(def.dir.clone().multiplyScalar(58));
+        labelSprite.scale.set(labelData.width * 0.03, labelData.height * 0.03, 1);
+        scene.add(labelSprite);
+      }
+  
+      // camera / renderer / controls
+      const initialCameraPos = { x: 0, y: 0, z: 80 };
+      const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(initialCameraPos.x, initialCameraPos.y, initialCameraPos.z);
+  
+      const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      document.body.appendChild(renderer.domElement);
+  
+      const controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+  
+      /* ==========================================================
+         4) Candidates build
+         ========================================================== */
+      const candidateObjects = [];
+      const targetSprites = [];
+  
+      function buildTooltipHtml(pt) {
+        const rows = LEADER_LABELS.map((label, i) => {
+          const v = pt.answer?.[i];
+          return `<div class="tooltip-row"><span>${label}:</span><span class="tooltip-val">${v ?? "-"}</span></div>`;
+        }).join("");
+  
+        return `
+          <strong>${pt.name}</strong>
+          <div class="tooltip-party">${pt.party}</div>
+          ${rows}
+        `;
+      }
+  
+      for (const pt of pointsData) {
+        // 点（スプライト）: 同じshape/colorは同じmaterialを共有
+        const sprite = new THREE.Sprite(getSpriteMaterial(pt.shape, pt.color));
+        sprite.position.set(pt.x, pt.y, pt.z);
+  
+        // ラベル（候補者名）: 個別テクスチャ（メモリを消費する点に注意）
+        const textData = createTextTexture(pt.name);
+        const label = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: textData.texture,
+          transparent: true,
+          opacity: THEME.opacity.label,
+          depthTest: false
+        }));
+        label.position.set(pt.x, pt.y + 0.9, pt.z);
+        label.scale.set(textData.width * 0.012, textData.height * 0.012, 1);
+        label.renderOrder = 999;
+  
+        sprite.userData = {
+          url: pt.url,
+          html: buildTooltipHtml(pt)
+        };
+  
+        scene.add(sprite);
+        scene.add(label);
+  
+        candidateObjects.push({
+          name: pt.name,
+          party: pt.party,
+          sprite,
+          label,
+          position: new THREE.Vector3(pt.x, pt.y, pt.z)
         });
-
-        legendEls.push(div);
-        frag.appendChild(div);
+  
+        targetSprites.push(sprite);
       }
-
-      legendDiv.appendChild(frag);
-    }
-    renderLegend();
-
-    /* ==========================================================
-       7) Tooltip + pointer interactions
-       ========================================================== */
-    const raycaster = new THREE.Raycaster();
-    const mouse = new THREE.Vector2();
-
-    let hoveredSprite = null;
-    let currentData = null;
-    let mouseDownPos = { x: 0, y: 0 };
-
-    function updateTooltipPos(clientX, clientY) {
-      // 右端にはみ出しやすいので固定幅で簡易回避（改善推薦は末尾）
-      const tooltipW = 220;
-      const xPos = (clientX + tooltipW > window.innerWidth) ? clientX - tooltipW : clientX + 15;
-      tooltip.style.left = `${xPos}px`;
-      tooltip.style.top = `${clientY - 40}px`;
-    }
-
-    function showTooltip(data) {
-      tooltip.innerHTML = data.html;
-      tooltip.style.display = "block";
-    }
-
-    function hideTooltip() {
-      tooltip.style.display = "none";
-      document.body.style.cursor = "default";
-    }
-
-    function jumpToUrl(data) {
-      if (data?.url) {
-        window.open(BASE_URL + data.url, "_blank", "noopener");
+  
+      /* ==========================================================
+         5) UI references
+         ========================================================== */
+      const legendDiv = document.getElementById("legend");
+      const tooltip = document.getElementById("tooltip");
+      const modal = document.getElementById("about-modal");
+  
+      const searchInput = document.getElementById("search-input");
+      const searchResults = document.getElementById("search-results");
+  
+      /* ==========================================================
+         6) Party filter (legend)
+         - sprite materialは共有されるので、同一materialへのgsap多重発行を避ける
+         ========================================================== */
+      let activeParty = null;
+  
+      function tweenOpacity(material, targetOpacity) {
+        // 変化がほぼ無い場合はGSAP発行を抑制
+        if (Math.abs(material.opacity - targetOpacity) < 0.001) return;
+        gsap.to(material, {
+          opacity: targetOpacity,
+          duration: THEME.duration.filter,
+          ease: "power2.out"
+        });
       }
-    }
-
-    function pickSprite(clientX, clientY) {
-      mouse.x = (clientX / window.innerWidth) * 2 - 1;
-      mouse.y = -(clientY / window.innerHeight) * 2 + 1;
-      raycaster.setFromCamera(mouse, camera);
-
-      const intersects = raycaster.intersectObjects(targetSprites, false);
-      return intersects.length ? intersects[0].object : null;
-    }
-
-    function resetScale() {
-      if (!hoveredSprite) return;
-      gsap.to(hoveredSprite.scale, { x: 1, y: 1, duration: THEME.duration.resetScale });
-      hoveredSprite = null;
-    }
-
-    window.addEventListener("pointerdown", (e) => {
-      if (e.target.closest(UI_SELECTORS)) return;
-      mouseDownPos = { x: e.clientX, y: e.clientY };
-    });
-
-    // PC hover（touchはhoverしない）
-    window.addEventListener("pointermove", (e) => {
-      if (e.pointerType === "touch") return;
-
-      if (e.target.closest(UI_SELECTORS) || e.buttons > 0) {
-        hideTooltip();
-        return;
+  
+      function applyPartyFilter() {
+        // spriteは共有materialがあるのでdedupe（material単位で1回だけ）
+        const spriteTargets = new Map(); // material -> targetOpacity
+  
+        for (const obj of candidateObjects) {
+          const isMatch = !activeParty || obj.party === activeParty;
+  
+          // labelは個別materialなのでそのまま
+          tweenOpacity(obj.label.material, isMatch ? THEME.opacity.label : THEME.opacity.dimmed);
+  
+          // sprite materialは共有される場合がある
+          const m = obj.sprite.material;
+          spriteTargets.set(m, isMatch ? THEME.opacity.point : THEME.opacity.dimmed);
+        }
+  
+        for (const [m, op] of spriteTargets) {
+          tweenOpacity(m, op);
+        }
       }
-
-      const hit = pickSprite(e.clientX, e.clientY);
-      if (!hit) {
-        hideTooltip();
-        resetScale();
-        return;
+  
+      function renderLegend() {
+        const frag = document.createDocumentFragment();
+        const legendEls = []; // selected切替をquerySelectorAllなしで行う
+  
+        for (const item of legendData) {
+          const div = document.createElement("div");
+          div.className = "legend-item";
+  
+          const iconUrl = getShapeDataUrl(item.style.shape, item.style.color);
+          div.innerHTML = `<img src="${iconUrl}" class="legend-icon" alt=""><span>${item.party}</span>`;
+  
+          div.addEventListener("click", () => {
+            const same = activeParty === item.party;
+            activeParty = same ? null : item.party;
+  
+            for (const el of legendEls) el.classList.remove("selected");
+            if (!same) div.classList.add("selected");
+  
+            applyPartyFilter();
+          });
+  
+          legendEls.push(div);
+          frag.appendChild(div);
+        }
+  
+        legendDiv.appendChild(frag);
       }
-
-      if (hoveredSprite !== hit) {
-        resetScale();
-        hoveredSprite = hit;
-        gsap.to(hit.scale, { x: 1.5, y: 1.5, duration: THEME.duration.hover, ease: "power3.out" });
+      renderLegend();
+  
+      /* ==========================================================
+         7) Tooltip + pointer interactions
+         ========================================================== */
+      const raycaster = new THREE.Raycaster();
+      const mouse = new THREE.Vector2();
+  
+      let hoveredSprite = null;
+      let currentData = null;
+      let mouseDownPos = { x: 0, y: 0 };
+  
+      function updateTooltipPos(clientX, clientY) {
+        // 右端にはみ出しやすいので固定幅で簡易回避（改善推薦は末尾）
+        const tooltipW = 220;
+        const xPos = (clientX + tooltipW > window.innerWidth) ? clientX - tooltipW : clientX + 15;
+        tooltip.style.left = `${xPos}px`;
+        tooltip.style.top = `${clientY - 40}px`;
       }
-
-      currentData = hit.userData;
-      showTooltip(currentData);
-      updateTooltipPos(e.clientX, e.clientY);
-      document.body.style.cursor = "pointer";
-    });
-
-    // PC click = open / touch tap = show tooltip
-    window.addEventListener("pointerup", (e) => {
-      if (e.target.closest(UI_SELECTORS)) return;
-
-      const dist = Math.hypot(e.clientX - mouseDownPos.x, e.clientY - mouseDownPos.y);
-      if (dist > 5) return;
-
-      const hit = pickSprite(e.clientX, e.clientY);
-      if (!hit) {
-        if (e.pointerType === "touch") {
+  
+      function showTooltip(data) {
+        tooltip.innerHTML = data.html;
+        tooltip.style.display = "block";
+      }
+  
+      function hideTooltip() {
+        tooltip.style.display = "none";
+        document.body.style.cursor = "default";
+      }
+  
+      function jumpToUrl(data) {
+        if (data?.url) {
+          window.open(BASE_URL + data.url, "_blank", "noopener");
+        }
+      }
+  
+      function pickSprite(clientX, clientY) {
+        mouse.x = (clientX / window.innerWidth) * 2 - 1;
+        mouse.y = -(clientY / window.innerHeight) * 2 + 1;
+        raycaster.setFromCamera(mouse, camera);
+  
+        const intersects = raycaster.intersectObjects(targetSprites, false);
+        return intersects.length ? intersects[0].object : null;
+      }
+  
+      function resetScale() {
+        if (!hoveredSprite) return;
+        gsap.to(hoveredSprite.scale, { x: 1, y: 1, duration: THEME.duration.resetScale });
+        hoveredSprite = null;
+      }
+  
+      window.addEventListener("pointerdown", (e) => {
+        if (e.target.closest(UI_SELECTORS)) return;
+        mouseDownPos = { x: e.clientX, y: e.clientY };
+      });
+  
+      // PC hover（touchはhoverしない）
+      window.addEventListener("pointermove", (e) => {
+        if (e.pointerType === "touch") return;
+  
+        if (e.target.closest(UI_SELECTORS) || e.buttons > 0) {
+          hideTooltip();
+          return;
+        }
+  
+        const hit = pickSprite(e.clientX, e.clientY);
+        if (!hit) {
           hideTooltip();
           resetScale();
+          return;
         }
-        return;
-      }
-
-      const data = hit.userData;
-
-      if (e.pointerType === "touch") {
+  
         if (hoveredSprite !== hit) {
           resetScale();
           hoveredSprite = hit;
-          gsap.to(hit.scale, { x: 1.5, y: 1.5, duration: THEME.duration.hover });
+          gsap.to(hit.scale, { x: 1.5, y: 1.5, duration: THEME.duration.hover, ease: "power3.out" });
         }
-        currentData = data;
-        showTooltip(data);
+  
+        currentData = hit.userData;
+        showTooltip(currentData);
         updateTooltipPos(e.clientX, e.clientY);
-      } else {
-        jumpToUrl(data);
-      }
-    });
-
-    // tooltip tap => open detail（モバイル向け）
-    tooltip.addEventListener("pointerup", (e) => {
-      e.stopPropagation();
-      if (currentData) jumpToUrl(currentData);
-    });
-
-    /* ==========================================================
-       8) Render loop
-       ========================================================== */
-    function animate() {
-      requestAnimationFrame(animate);
-
-      const time = performance.now() * 0.005;
-      const pulseScale = 1.4 + Math.sin(time) * 0.4;
-
-      for (const obj of candidateObjects) {
-        if (obj.sprite === hoveredSprite) continue;
-        const targetScale = (activeParty && obj.party === activeParty) ? pulseScale : 1;
-        if (Math.abs(obj.sprite.scale.x - targetScale) > 0.01) {
-          obj.sprite.scale.set(targetScale, targetScale, 1);
+        document.body.style.cursor = "pointer";
+      });
+  
+      // PC click = open / touch tap = show tooltip
+      window.addEventListener("pointerup", (e) => {
+        if (e.target.closest(UI_SELECTORS)) return;
+  
+        const dist = Math.hypot(e.clientX - mouseDownPos.x, e.clientY - mouseDownPos.y);
+        if (dist > 5) return;
+  
+        const hit = pickSprite(e.clientX, e.clientY);
+        if (!hit) {
+          if (e.pointerType === "touch") {
+            hideTooltip();
+            resetScale();
+          }
+          return;
         }
+  
+        const data = hit.userData;
+  
+        if (e.pointerType === "touch") {
+          if (hoveredSprite !== hit) {
+            resetScale();
+            hoveredSprite = hit;
+            gsap.to(hit.scale, { x: 1.5, y: 1.5, duration: THEME.duration.hover });
+          }
+          currentData = data;
+          showTooltip(data);
+          updateTooltipPos(e.clientX, e.clientY);
+        } else {
+          jumpToUrl(data);
+        }
+      });
+  
+      // tooltip tap => open detail（モバイル向け）
+      tooltip.addEventListener("pointerup", (e) => {
+        e.stopPropagation();
+        if (currentData) jumpToUrl(currentData);
+      });
+  
+      /* ==========================================================
+         8) Render loop
+         ========================================================== */
+      function animate() {
+        requestAnimationFrame(animate);
+  
+        const time = performance.now() * 0.005;
+        const pulseScale = 1.4 + Math.sin(time) * 0.4;
+  
+        for (const obj of candidateObjects) {
+          if (obj.sprite === hoveredSprite) continue;
+          const targetScale = (activeParty && obj.party === activeParty) ? pulseScale : 1;
+          if (Math.abs(obj.sprite.scale.x - targetScale) > 0.01) {
+            obj.sprite.scale.set(targetScale, targetScale, 1);
+          }
+        }
+  
+        controls.update();
+        renderer.render(scene, camera);
       }
-
-      controls.update();
-      renderer.render(scene, camera);
-    }
-    animate();
-
-    window.addEventListener("resize", () => {
-      camera.aspect = window.innerWidth / window.innerHeight;
-      camera.updateProjectionMatrix();
-      renderer.setSize(window.innerWidth, window.innerHeight);
-    });
-
-    /* ==========================================================
-       9) About modal
-       ========================================================== */
-    document.getElementById("about-btn").addEventListener("click", () => {
-      modal.style.display = "flex";
-    });
-
-    document.getElementById("close-modal").addEventListener("click", () => {
-      modal.style.display = "none";
-    });
-
-    window.addEventListener("click", (e) => {
-      if (e.target === modal) modal.style.display = "none";
-    });
-
-    /* ==========================================================
-       10) Search
-       ========================================================== */
-    searchInput.addEventListener("input", (e) => {
-      const val = e.target.value.trim();
-      searchResults.innerHTML = "";
-
-      if (!val) {
-        searchResults.style.display = "none";
-        return;
-      }
-
-      const matches = candidateObjects.filter(obj => obj.name.includes(val) || obj.party.includes(val));
-      if (matches.length === 0) {
-        searchResults.style.display = "none";
-        return;
-      }
-
-      const frag = document.createDocumentFragment();
-      for (const match of matches) {
-        const li = document.createElement("li");
-        li.className = "search-item";
-        li.innerHTML = `<span>${match.name}</span><span class="search-party">${match.party}</span>`;
-
-        li.addEventListener("click", () => {
-          focusCandidate(match);
+      animate();
+  
+      window.addEventListener("resize", () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+  
+      /* ==========================================================
+         9) About modal
+         ========================================================== */
+      document.getElementById("about-btn").addEventListener("click", () => {
+        modal.style.display = "flex";
+      });
+  
+      document.getElementById("close-modal").addEventListener("click", () => {
+        modal.style.display = "none";
+      });
+  
+      window.addEventListener("click", (e) => {
+        if (e.target === modal) modal.style.display = "none";
+      });
+  
+      /* ==========================================================
+         10) Search
+         ========================================================== */
+      searchInput.addEventListener("input", (e) => {
+        const val = e.target.value.trim();
+        searchResults.innerHTML = "";
+  
+        if (!val) {
           searchResults.style.display = "none";
-          searchInput.value = match.name;
+          return;
+        }
+  
+        const matches = candidateObjects.filter(obj => obj.name.includes(val) || obj.party.includes(val));
+        if (matches.length === 0) {
+          searchResults.style.display = "none";
+          return;
+        }
+  
+        const frag = document.createDocumentFragment();
+        for (const match of matches) {
+          const li = document.createElement("li");
+          li.className = "search-item";
+          li.innerHTML = `<span>${match.name}</span><span class="search-party">${match.party}</span>`;
+  
+          li.addEventListener("click", () => {
+            focusCandidate(match);
+            searchResults.style.display = "none";
+            searchInput.value = match.name;
+          });
+  
+          frag.appendChild(li);
+        }
+  
+        searchResults.appendChild(frag);
+        searchResults.style.display = "block";
+      });
+  
+      // Enter: first item or reset view
+      searchInput.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter") return;
+  
+        const val = searchInput.value.trim();
+        if (!val) {
+          resetView();
+          searchInput.blur();
+          return;
+        }
+  
+        const first = searchResults.querySelector(".search-item");
+        if (first) {
+          first.click();
+          searchInput.blur();
+        }
+      });
+  
+      function focusCandidate(candidateObj) {
+        const targetPos = candidateObj.position;
+  
+        gsap.to(camera.position, {
+          x: targetPos.x,
+          y: targetPos.y,
+          z: targetPos.z + 15,
+          duration: THEME.duration.camera,
+          ease: "power3.inOut",
+          onUpdate: () => controls.update()
         });
-
-        frag.appendChild(li);
+  
+        gsap.to(controls.target, {
+          x: targetPos.x,
+          y: targetPos.y,
+          z: targetPos.z,
+          duration: THEME.duration.camera,
+          ease: "power3.inOut"
+        });
       }
-
-      searchResults.appendChild(frag);
-      searchResults.style.display = "block";
-    });
-
-    // Enter: first item or reset view
-    searchInput.addEventListener("keydown", (e) => {
-      if (e.key !== "Enter") return;
-
-      const val = searchInput.value.trim();
-      if (!val) {
-        resetView();
-        searchInput.blur();
-        return;
+  
+      function resetView() {
+        gsap.to(camera.position, {
+          x: initialCameraPos.x,
+          y: initialCameraPos.y,
+          z: initialCameraPos.z,
+          duration: THEME.duration.camera,
+          ease: "power3.inOut",
+          onUpdate: () => controls.update()
+        });
+  
+        gsap.to(controls.target, {
+          x: 0, y: 0, z: 0,
+          duration: THEME.duration.camera,
+          ease: "power3.inOut"
+        });
       }
-
-      const first = searchResults.querySelector(".search-item");
-      if (first) {
-        first.click();
-        searchInput.blur();
-      }
-    });
-
-    function focusCandidate(candidateObj) {
-      const targetPos = candidateObj.position;
-
-      gsap.to(camera.position, {
-        x: targetPos.x,
-        y: targetPos.y,
-        z: targetPos.z + 15,
-        duration: THEME.duration.camera,
-        ease: "power3.inOut",
-        onUpdate: () => controls.update()
-      });
-
-      gsap.to(controls.target, {
-        x: targetPos.x,
-        y: targetPos.y,
-        z: targetPos.z,
-        duration: THEME.duration.camera,
-        ease: "power3.inOut"
-      });
-    }
-
-    function resetView() {
-      gsap.to(camera.position, {
-        x: initialCameraPos.x,
-        y: initialCameraPos.y,
-        z: initialCameraPos.z,
-        duration: THEME.duration.camera,
-        ease: "power3.inOut",
-        onUpdate: () => controls.update()
-      });
-
-      gsap.to(controls.target, {
-        x: 0, y: 0, z: 0,
-        duration: THEME.duration.camera,
-        ease: "power3.inOut"
-      });
     }
   </script>
 </body>
