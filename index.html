@@ -325,6 +325,73 @@
         #about-btn { top: 15px; right: 15px; width: 40px; height: 40px; }
         #tooltip { pointer-events: auto; cursor: pointer; }
     }
+
+    /* --- スマホ向け：パネル最小化トグル --- */
+    .panel-toggle {
+        display: none; /* デフォルトは非表示（スマホだけ表示） */
+        background: rgba(255,255,255,0.9);
+        border: 1px solid var(--border-color);
+        border-radius: 50%;
+        width: 28px;
+        height: 28px;
+        cursor: pointer;
+        color: var(--text-sub);
+        font-size: 16px;
+        line-height: 1;
+        padding: 0;
+        box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        align-items: center;
+        justify-content: center;
+        -webkit-tap-highlight-color: transparent;
+    }
+    .panel-toggle:active { transform: scale(0.95); }
+
+    .filter-header-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    /* スマホのみ：トグル表示＆最小化スタイル */
+    @media (max-width: 600px) {
+        .panel-toggle { display: flex; }
+
+        /* 政党一覧のトグルは右上に固定配置 */
+        #legend { position: absolute; } /* 念のため（すでにabsoluteなら不要だがOK） */
+        #legend-toggle {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+        }
+
+        /* 最小化状態：政党一覧 */
+        #legend.minimized {
+            max-height: 52px;
+            overflow: hidden;
+            padding: 12px;
+        }
+        #legend.minimized .legend-item { display: none; }
+        #legend.minimized .legend-title {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+
+        /* 最小化状態：政策フィルター */
+        #filter-panel.minimized {
+            padding: 12px;
+        }
+        #filter-panel.minimized .filter-row,
+        #filter-panel.minimized .filter-control {
+            display: none;
+        }
+        #filter-panel.minimized .filter-header {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+    }
+
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
@@ -384,14 +451,18 @@
 
     <div id="legend">
         <div class="legend-title">政党一覧</div>
+        <button id="legend-toggle" class="panel-toggle" title="最小化" aria-expanded="true">▾</button>
     </div>
 
     <div id="filter-panel">
         <div class="filter-header">
             <span>政策で絞り込み</span>
-            <button id="filter-reset" title="解除">×</button>
+            <div class="filter-header-actions">
+                <button id="filter-toggle" class="panel-toggle" title="最小化" aria-expanded="true">▾</button>
+                <button id="filter-reset" title="解除">×</button>
+            </div>
         </div>
-        
+
         <div class="filter-row">
             <select id="issue-select">
                 <option value="">質問項目を選択...</option>
@@ -1183,6 +1254,81 @@
         }
 
         initFilterUI();
+
+        /* --- 9. スマホ向け：政党一覧 / 政策フィルター 最小化 --- */
+        const filterPanel = document.getElementById('filter-panel');
+        const legendToggle = document.getElementById('legend-toggle');
+        const filterToggle = document.getElementById('filter-toggle');
+        const mqMobile = window.matchMedia('(max-width: 600px)');
+
+        function syncToggleButton(btn, expanded) {
+            if (!btn) return;
+            btn.setAttribute('aria-expanded', String(expanded));
+            btn.textContent = expanded ? '▾' : '▸';
+            btn.title = expanded ? '最小化' : '開く';
+        }
+
+        function updateMobileLayout() {
+            // PC/タブレットはCSSに任せる
+            if (!mqMobile.matches) {
+                filterPanel.style.bottom = '';
+                return;
+            }
+
+            // スマホは「政党一覧の高さ + 余白」の上に政策パネルを積む
+            // （CSSの #legend { bottom: 15px; } と合わせる）
+            const legendBottom = 15;
+            const gap = 10;
+            const legendH = legendDiv.getBoundingClientRect().height;
+            filterPanel.style.bottom = `${legendBottom + legendH + gap}px`;
+        }
+
+        function setMinimized(panel, btn, minimized) {
+            if (!panel) return;
+            panel.classList.toggle('minimized', minimized);
+            syncToggleButton(btn, !minimized);
+            updateMobileLayout();
+        }
+
+        function toggleMinimized(panel, btn) {
+            setMinimized(panel, btn, !panel.classList.contains('minimized'));
+        }
+
+        // クリックで開閉（バブルすると凡例クリック等に影響するので止める）
+        if (legendToggle) {
+            legendToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleMinimized(legendDiv, legendToggle);
+            });
+        }
+        if (filterToggle) {
+            filterToggle.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleMinimized(filterPanel, filterToggle);
+            });
+        }
+
+        // 初期状態：スマホは両方最小化 / PCは展開
+        function applyResponsivePanels() {
+            if (mqMobile.matches) {
+                setMinimized(legendDiv, legendToggle, true);
+                setMinimized(filterPanel, filterToggle, true);
+            } else {
+                setMinimized(legendDiv, legendToggle, false);
+                setMinimized(filterPanel, filterToggle, false);
+                filterPanel.style.bottom = '';
+            }
+        }
+        applyResponsivePanels();
+
+        // 画面回転や幅変更に追従
+        if (mqMobile.addEventListener) {
+            mqMobile.addEventListener('change', applyResponsivePanels);
+        } else {
+            mqMobile.addListener(applyResponsivePanels); // 古いSafari向け
+        }
+        window.addEventListener('resize', updateMobileLayout);
+
     </script>
 </body>
 </html>
