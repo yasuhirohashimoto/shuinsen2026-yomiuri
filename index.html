@@ -662,13 +662,15 @@
             try {
                 const [candidatesRes, partiesRes] = await Promise.all([
                     fetch('./data/candidates.json'),
-                    fetch('./data/parties.json')]);
+                    fetch('./data/parties.json')
+                ]);
                 if (!candidatesRes.ok || !partiesRes.ok) {
                     throw new Error("ファイルの取得に失敗しました");
                 }
                 const candidates = await candidatesRes.json();
                 const parties = await partiesRes.json();
                 return { candidates, parties };
+
             } catch (error) {
                 console.error("データの読み込みに失敗しました:", error);
                 alert("データを読み込めませんでした。");
@@ -678,13 +680,15 @@
 
         async function main() {
 
-            /*==========================================================
-              0) Data
-              ==========================================================*/
+            /* ==========================================================
+               0) Data
+               ========================================================== */
             const data = await loadData();
             if (!data) return;
+
             const pointsData = data.candidates;
             const legendData = data.parties;
+
             const qdata = {
                 "Q2. 社会保障負担": ["給付維持×負担増", "給付減×負担減", 5],
                 "Q3. 高齢者医療費3割": ["賛成", "反対", 5],
