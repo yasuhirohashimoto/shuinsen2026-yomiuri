@@ -411,7 +411,7 @@
     let pointsData = []
     let legendData = []
 
-    async function initApp() {
+    async function loadData() {
         try {
             const [candidatesRes, partiesRes] = await Promise.all([
                 fetch('./data/candidates-pca.json'),
@@ -421,20 +421,13 @@
             pointsData = await candidatesRes.json();
             legendData = await partiesRes.json();
     
-            createScene();
-            createPoints();
-            createLegend();
-            initFilterUI();
-            animate();
-    
         } catch (error) {
             console.error("データの読み込みに失敗しました:", error);
             alert("データを読み込めませんでした。");
         }
     }
     
-    // アプリ起動
-    initApp();
+    loadData();
     
     // tooltip表示順（Q25の順序に合わせる）
     const LEADER_LABELS = [
