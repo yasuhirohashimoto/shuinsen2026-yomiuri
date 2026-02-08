@@ -413,7 +413,7 @@
 
     async function initApp() {
         try {
-            const [candidatesRes, partiesRes, questionsRes] = await Promise.all([
+            const [candidatesRes, partiesRes] = await Promise.all([
                 fetch('./data/candidates-pca.json'),
                 fetch('./data/parties.json')
             ]);
