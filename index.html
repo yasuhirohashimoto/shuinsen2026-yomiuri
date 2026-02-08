@@ -259,17 +259,22 @@
         padding-bottom: 8px;
     }
 
-    #filter-reset {
-        background: transparent;
-        border: 1px solid var(--border-color);
-        border-radius: 50%;
-        width: 24px; height: 24px;
-        cursor: pointer;
-        color: var(--text-sub);
-        display: flex; align-items: center; justify-content: center;
-        font-size: 16px;
+    #filter-reset.filter-reset-btn {
+      background: rgba(255,255,255,0.85);
+      border: 1px solid var(--border-color);
+      border-radius: 999px;
+      padding: 6px 10px;
+      cursor: pointer;
+      color: var(--text-sub);
+      font-size: 12px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      -webkit-tap-highlight-color: transparent;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.06);
     }
-    #filter-reset:hover { background: #eee; color: #333; }
+    #filter-reset.filter-reset-btn:hover { background: #eee; color: #333; }
+    #filter-reset.filter-reset-btn:active { transform: scale(0.98); }
 
     #issue-select {
         width: 100%;
@@ -392,6 +397,81 @@
         }
     }
 
+    /* --- スマホ向け：ヘッダタップで最小化/展開（トグルボタン不要） --- */
+    @media (max-width: 600px) {
+      /* タップできることを示す */
+      #legend .legend-title,
+      #filter-panel .filter-header {
+        cursor: pointer;
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+    
+      /* 政党一覧：タイトル右に開閉マーク */
+      #legend .legend-title {
+        position: relative;
+        padding-right: 22px; /* 矢印分 */
+      }
+      #legend .legend-title::after {
+        content: "▾";
+        position: absolute;
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--text-sub);
+        font-weight: bold;
+      }
+      #legend.minimized .legend-title::after { content: "▸"; }
+    
+      /* 政策：タイトル横に開閉マーク（spanに付与するのでflex崩れない） */
+      #filter-panel .filter-title {
+        position: relative;
+        padding-right: 22px; /* 矢印分 */
+      }
+      #filter-panel .filter-title::after {
+        content: "▾";
+        position: absolute;
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        color: var(--text-sub);
+        font-weight: bold;
+      }
+      #filter-panel.minimized .filter-title::after { content: "▸"; }
+    
+      /* 最小化状態：政党一覧 */
+      #legend.minimized {
+        max-height: 52px;
+        overflow: hidden;
+        padding: 12px;
+      }
+      #legend.minimized .legend-item { display: none; }
+      #legend.minimized .legend-title {
+        margin-bottom: 0;
+        padding-bottom: 0;
+        border-bottom: none;
+      }
+    
+      /* 最小化状態：政策フィルター */
+      #filter-panel.minimized {
+        padding: 12px;
+      }
+      #filter-panel.minimized .filter-row,
+      #filter-panel.minimized .filter-control {
+        display: none;
+      }
+      #filter-panel.minimized .filter-header {
+        margin-bottom: 0;
+        padding-bottom: 0;
+        border-bottom: none;
+      }
+    
+      /* リセットボタンはヘッダタップの対象外にしたいので目立たせつつ誤タップも減らす */
+      #filter-reset.filter-reset-btn {
+        font-size: 12px;
+        padding: 6px 10px;
+      }
+    }
     </style>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
@@ -451,16 +531,14 @@
 
     <div id="legend">
         <div class="legend-title">政党一覧</div>
-        <button id="legend-toggle" class="panel-toggle" title="最小化" aria-expanded="true">▾</button>
     </div>
 
     <div id="filter-panel">
         <div class="filter-header">
-            <span>政策で絞り込み</span>
-            <div class="filter-header-actions">
-                <button id="filter-reset" title="解除">×</button>
-                <button id="filter-toggle" class="panel-toggle" title="最小化" aria-expanded="true">▾</button>
-            </div>
+          <span class="filter-title">政策で絞り込み</span>
+          <button id="filter-reset" class="filter-reset-btn" type="button" aria-label="政策フィルターをリセット">
+            ↺ リセット
+          </button>
         </div>
 
         <div class="filter-row">
@@ -1255,80 +1333,75 @@
 
         initFilterUI();
 
-        /* --- 9. スマホ向け：政党一覧 / 政策フィルター 最小化 --- */
+        /* --- 9. スマホ向け：ヘッダタップで最小化/展開（トグルボタンなし） --- */
         const filterPanel = document.getElementById('filter-panel');
-        const legendToggle = document.getElementById('legend-toggle');
-        const filterToggle = document.getElementById('filter-toggle');
         const mqMobile = window.matchMedia('(max-width: 600px)');
-
-        function syncToggleButton(btn, expanded) {
-            if (!btn) return;
-            btn.setAttribute('aria-expanded', String(expanded));
-            btn.textContent = expanded ? '▾' : '▸';
-            btn.title = expanded ? '最小化' : '開く';
-        }
-
+        
+        const legendTitleEl = legendDiv.querySelector('.legend-title');
+        const filterHeaderEl = filterPanel.querySelector('.filter-header');
+        
         function updateMobileLayout() {
-            // PC/タブレットはCSSに任せる
-            if (!mqMobile.matches) {
-                filterPanel.style.bottom = '';
-                return;
-            }
-
-            // スマホは「政党一覧の高さ + 余白」の上に政策パネルを積む
-            // （CSSの #legend { bottom: 15px; } と合わせる）
-            const legendBottom = 15;
-            const gap = 10;
-            const legendH = legendDiv.getBoundingClientRect().height;
-            filterPanel.style.bottom = `${legendBottom + legendH + gap}px`;
+          if (!mqMobile.matches) {
+            filterPanel.style.bottom = '';
+            return;
+          }
+          // スマホは「政党一覧の高さ + 余白」の上に政策パネルを積む
+          const legendBottom = 15; // CSSの #legend { bottom: 15px; } に合わせる
+          const gap = 10;
+          const legendH = legendDiv.getBoundingClientRect().height;
+          filterPanel.style.bottom = `${legendBottom + legendH + gap}px`;
         }
-
-        function setMinimized(panel, btn, minimized) {
-            if (!panel) return;
-            panel.classList.toggle('minimized', minimized);
-            syncToggleButton(btn, !minimized);
-            updateMobileLayout();
+        
+        function setMinimized(panel, minimized) {
+          panel.classList.toggle('minimized', minimized);
+          updateMobileLayout();
         }
-
-        function toggleMinimized(panel, btn) {
-            setMinimized(panel, btn, !panel.classList.contains('minimized'));
+        
+        function toggleMinimized(panel) {
+          setMinimized(panel, !panel.classList.contains('minimized'));
         }
-
-        // クリックで開閉（バブルすると凡例クリック等に影響するので止める）
-        if (legendToggle) {
-            legendToggle.addEventListener('click', (e) => {
-                e.stopPropagation();
-                toggleMinimized(legendDiv, legendToggle);
-            });
+        
+        /* 政党一覧：タイトル行タップでトグル */
+        if (legendTitleEl) {
+          legendTitleEl.addEventListener('click', (e) => {
+            if (!mqMobile.matches) return;
+            e.stopPropagation();
+            toggleMinimized(legendDiv);
+          });
         }
-        if (filterToggle) {
-            filterToggle.addEventListener('click', (e) => {
-                e.stopPropagation();
-                toggleMinimized(filterPanel, filterToggle);
-            });
+        
+        /* 政策：ヘッダタップでトグル（ただしリセットボタンは除外） */
+        if (filterHeaderEl) {
+          filterHeaderEl.addEventListener('click', (e) => {
+            if (!mqMobile.matches) return;
+        
+            // リセットボタンを押した時はトグルしない
+            if (e.target.closest('#filter-reset')) return;
+        
+            toggleMinimized(filterPanel);
+          });
         }
-
-        // 初期状態：スマホは両方最小化 / PCは展開
+        
+        /* 初期状態：スマホは両方最小化、PCは展開 */
         function applyResponsivePanels() {
-            if (mqMobile.matches) {
-                setMinimized(legendDiv, legendToggle, true);
-                setMinimized(filterPanel, filterToggle, true);
-            } else {
-                setMinimized(legendDiv, legendToggle, false);
-                setMinimized(filterPanel, filterToggle, false);
-                filterPanel.style.bottom = '';
-            }
+          if (mqMobile.matches) {
+            setMinimized(legendDiv, true);
+            setMinimized(filterPanel, true);
+          } else {
+            setMinimized(legendDiv, false);
+            setMinimized(filterPanel, false);
+            filterPanel.style.bottom = '';
+          }
         }
+        
         applyResponsivePanels();
-
-        // 画面回転や幅変更に追従
+        
         if (mqMobile.addEventListener) {
-            mqMobile.addEventListener('change', applyResponsivePanels);
+          mqMobile.addEventListener('change', applyResponsivePanels);
         } else {
-            mqMobile.addListener(applyResponsivePanels); // 古いSafari向け
+          mqMobile.addListener(applyResponsivePanels); // 古いSafari向け
         }
         window.addEventListener('resize', updateMobileLayout);
-
     </script>
 </body>
 </html>
